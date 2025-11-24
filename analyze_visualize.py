@@ -33,6 +33,39 @@ sns.set_palette("husl")
 # ANALYSIS FUNCTIONS (Team Member 2)
 # ==============================================================================
 
+def normalize_genre(genre_name):
+    """
+    Map MusicBrainz tags to standard genre categories.
+    Copied from process_data.py to ensure consistency in analysis.
+
+    Args:
+        genre_name (str): Raw genre name from MusicBrainz
+
+    Returns:
+        str: Normalized genre category
+    """
+    genre_lower = genre_name.lower()
+
+    # Define mappings from MusicBrainz tags to standard genres
+    mappings = {
+        'hip-hop': ['hip hop', 'hip-hop', 'rap', 'trap', 'hip hop soul'],
+        'rock': ['rock', 'alternative rock', 'hard rock', 'alternative metal', 'industrial metal'],
+        'pop': ['pop', 'art pop', 'folk pop'],
+        'r&b': ['r&b', 'contemporary r&b', 'soul'],
+        'latin': ['reggaeton', 'latin urban', 'norteño', 'flamenco'],
+        'country': ['country', 'canadian'],
+        'electronic': ['electronic', 'edm'],
+        'jazz': ['jazz'],
+        'classical': ['classical'],
+    }
+
+    for standard_genre, variants in mappings.items():
+        if genre_lower in variants or any(v in genre_lower for v in variants):
+            return standard_genre
+
+    return 'other'
+
+
 def select_data_with_join():
     """
     Select data from ALL tables using database JOINs.
@@ -44,6 +77,7 @@ def select_data_with_join():
     conn = sqlite3.connect(DB_NAME)
     
     # Complex JOIN query across all 5 tables
+    # We fetch raw data first, then normalize and aggregate in Python
     query = '''
         SELECT 
             CASE 
@@ -52,21 +86,39 @@ def select_data_with_join():
                 ELSE 'High (>$70k)'
             END as income_bracket,
             g.genre_name,
-            COUNT(*) as count,
-            AVG(r.median_income) as avg_income,
-            AVG(t.popularity) as avg_popularity
+            r.median_income,
+            t.popularity
         FROM regional_popularity rp
         JOIN regions r ON rp.region_id = r.region_id
         JOIN tracks t ON rp.track_id = t.track_id
         JOIN track_genres tg ON t.track_id = tg.track_id
         JOIN genres g ON tg.genre_id = g.genre_id
-        GROUP BY income_bracket, g.genre_name
-        HAVING count > 3
-        ORDER BY income_bracket, count DESC
     '''
     
-    df = pd.read_sql_query(query, conn)
+    raw_df = pd.read_sql_query(query, conn)
     conn.close()
+    
+    if raw_df.empty:
+        return raw_df
+
+    # Apply normalization
+    raw_df['normalized_genre'] = raw_df['genre_name'].apply(normalize_genre)
+    
+    # Aggregate by income_bracket and normalized_genre
+    df = raw_df.groupby(['income_bracket', 'normalized_genre']).agg(
+        count=('normalized_genre', 'count'),
+        avg_income=('median_income', 'mean'),
+        avg_popularity=('popularity', 'mean')
+    ).reset_index()
+    
+    # Rename column to match expected format
+    df = df.rename(columns={'normalized_genre': 'genre_name'})
+    
+    # Filter low counts if necessary (optional, but keeps consistency with original query)
+    df = df[df['count'] > 3]
+    
+    # Sort
+    df = df.sort_values(['income_bracket', 'count'], ascending=[True, False])
     
     return df
 
