@@ -1,0 +1,33 @@
+# Claude
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.python-version
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Generated files
+*.db
+*.png
+analysis_results.txt
+
+# Lock files (optional - remove if you want to track dependencies)
+uv.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
