@@ -17,6 +17,38 @@ DB_NAME = 'music_income.db'
 MAX_ITEMS_PER_RUN = 25  # For consistency, though this creates many records
 
 
+def normalize_genre(genre_name):
+    """
+    Map MusicBrainz tags to standard genre categories.
+
+    Args:
+        genre_name (str): Raw genre name from MusicBrainz
+
+    Returns:
+        str: Normalized genre category
+    """
+    genre_lower = genre_name.lower()
+
+    # Define mappings from MusicBrainz tags to standard genres
+    mappings = {
+        'hip-hop': ['hip hop', 'hip-hop', 'rap', 'trap', 'hip hop soul'],
+        'rock': ['rock', 'alternative rock', 'hard rock', 'alternative metal', 'industrial metal'],
+        'pop': ['pop', 'art pop', 'folk pop'],
+        'r&b': ['r&b', 'contemporary r&b', 'soul'],
+        'latin': ['reggaeton', 'latin urban', 'norteño', 'flamenco'],
+        'country': ['country', 'canadian'],
+        'electronic': ['electronic', 'edm'],
+        'jazz': ['jazz'],
+        'classical': ['classical'],
+    }
+
+    for standard_genre, variants in mappings.items():
+        if genre_lower in variants or any(v in genre_lower for v in variants):
+            return standard_genre
+
+    return 'other'
+
+
 def create_regional_preferences():
     """
     Create relationships between regions and tracks based on income.
@@ -59,23 +91,23 @@ def create_regional_preferences():
     
     print(f"Processing {len(regions)} regions and {len(tracks)} tracks...")
     
-    # Define genre weights by income bracket
+    # Define genre weights by income bracket (using normalized genre names)
     low_income_weights = {
-        'hip-hop': 2.5, 'pop': 2.0, 'r&b': 1.8,
-        'country': 1.5, 'rock': 1.0, 'jazz': 0.5, 
-        'classical': 0.3, 'electronic': 1.2
+        'hip-hop': 2.5, 'pop': 2.0, 'r&b': 1.8, 'latin': 1.6,
+        'country': 1.5, 'rock': 1.0, 'jazz': 0.5,
+        'classical': 0.3, 'electronic': 1.2, 'other': 1.0
     }
-    
+
     middle_income_weights = {
-        'pop': 2.2, 'hip-hop': 1.8, 'rock': 1.8,
-        'r&b': 1.5, 'country': 1.3, 'jazz': 0.8, 
-        'classical': 0.6, 'electronic': 1.5
+        'pop': 2.2, 'hip-hop': 1.8, 'rock': 1.8, 'latin': 1.5,
+        'r&b': 1.5, 'country': 1.3, 'jazz': 0.8,
+        'classical': 0.6, 'electronic': 1.5, 'other': 1.0
     }
-    
+
     high_income_weights = {
-        'rock': 2.5, 'pop': 1.8, 'classical': 1.5,
-        'jazz': 1.5, 'r&b': 1.2, 'hip-hop': 1.0, 
-        'country': 0.8, 'electronic': 1.0
+        'rock': 2.5, 'pop': 1.8, 'classical': 1.5, 'jazz': 1.5,
+        'r&b': 1.2, 'hip-hop': 1.0, 'latin': 1.0,
+        'country': 0.8, 'electronic': 1.0, 'other': 1.0
     }
     
     created_count = 0
@@ -91,7 +123,8 @@ def create_regional_preferences():
         
         # For each track, decide if it's popular in this region
         for track_id, genre, popularity in tracks:
-            weight = weights.get(genre, 1.0)
+            normalized_genre = normalize_genre(genre)
+            weight = weights.get(normalized_genre, 1.0)
             
             # Probability of track being popular in this region
             # Higher weight = higher probability
