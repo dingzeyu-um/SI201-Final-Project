@@ -62,8 +62,15 @@ def create_regional_preferences():
     Returns:
         int: Number of preference records created
     """
+    # Set seed for reproducibility
+    np.random.seed(42)
+    
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
+    
+    # Clear existing data to ensure fresh start
+    cursor.execute('DELETE FROM regional_popularity')
+    print("✓ Cleared existing regional preferences")
     
     # Get all regions with income data
     cursor.execute('SELECT region_id, median_income FROM regions')
