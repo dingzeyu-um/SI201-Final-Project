@@ -186,7 +186,7 @@ def store_tracks(tracks):
     
     conn.close()
     
-    print(f"✓ Stored {stored_count} new tracks (Total: {total})")
+    print(f"Stored {stored_count} new tracks (Total: {total})")
     
     return stored_count
 
@@ -245,15 +245,15 @@ def main():
         
         print("\n" + "="*60)
         if total >= 100:
-            print(f"✓ COMPLETE: {total} tracks in database (100+ required)")
+            print(f"COMPLETE: {total} tracks in database (100+ required)")
         else:
             remaining = 100 - total
             runs_needed = (remaining // MAX_ITEMS_PER_RUN) + 1
-            print(f"⚠️  Need {remaining} more tracks")
-            print(f"   Run this script {runs_needed} more time(s)")
+            print(f"Need {remaining} more tracks")
+            print(f"Run this script {runs_needed} more time(s)")
         print("="*60)
     else:
-        print("✗ No tracks retrieved")
+        print("No tracks retrieved")
 
 
 if __name__ == "__main__":

@@ -59,11 +59,11 @@ def fetch_census_data():
                 except ValueError:
                     continue
         
-        print(f"✓ Retrieved {len(regions)} regions from Census Bureau")
+        print(f" Retrieved {len(regions)} regions from Census Bureau")
         return regions
         
     except requests.exceptions.RequestException as e:
-        print(f"✗ Error fetching from Census API: {e}")
+        print(f" Error fetching from Census API: {e}")
         print("  Using simulated data instead...")
         return get_simulated_census_data()
 
@@ -195,7 +195,7 @@ def store_regions(regions):
     
     conn.close()
     
-    print(f"✓ Stored {stored_count} new regions (Total: {total})")
+    print(f" Stored {stored_count} new regions (Total: {total})")
     
     return stored_count
 
@@ -226,16 +226,16 @@ def main():
         
         print("\n" + "="*60)
         if total >= 100:
-            print(f"✓ COMPLETE: {total} regions in database (100+ required)")
+            print(f"COMPLETE: {total} regions in database (100+ required)")
         else:
             remaining = 100 - total
             runs_needed = (remaining // MAX_ITEMS_PER_RUN) + 1
-            print(f"⚠️  Need {remaining} more regions")
+            print(f" Need {remaining} more regions")
             print(f"   Run this script {runs_needed} more time(s)")
             print(f"   (Note: Only 52 states/territories available)")
         print("="*60)
     else:
-        print("✗ No regions retrieved")
+        print("No regions retrieved")
 
 
 if __name__ == "__main__":
