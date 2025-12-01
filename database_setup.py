@@ -123,7 +123,7 @@ def check_database_status():
             cursor.execute(f'SELECT COUNT(*) FROM {table}')
             count = cursor.fetchone()[0]
             counts[table] = count
-            status = "✓" if count >= 100 else "⚠️"
+            status = "good" if count >= 100 else "bad"
             print(f"  {status} {table}: {count} rows")
         except sqlite3.OperationalError:
             counts[table] = 0
