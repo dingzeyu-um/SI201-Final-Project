@@ -195,9 +195,9 @@ def check_data_status():
         count = cursor.fetchone()[0]
         
         if count >= min_required:
-            print(f"  ✓ {table}: {count} rows")
+            print(f"   {table}: {count} rows")
         else:
-            print(f"  ✗ {table}: {count} rows (need {min_required}+)")
+            print(f"   {table}: {count} rows (need {min_required}+)")
             all_ready = False
     
     conn.close()

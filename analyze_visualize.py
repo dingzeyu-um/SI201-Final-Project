@@ -213,7 +213,8 @@ def export_results_to_file(df, contingency, chi2, p_value, dof, cramers_v):
     """
     filename = 'analysis_results.txt'
     
-    with open(filename, 'w') as f:
+    # Use UTF-8 to allow Greek letters (e.g., alpha symbol) without encode errors on Windows
+    with open(filename, 'w', encoding='utf-8') as f:
         f.write("="*70 + "\n")
         f.write("MUSIC TRENDS VS INCOME LEVEL - ANALYSIS RESULTS\n")
         f.write("SI 201 Final Project\n")

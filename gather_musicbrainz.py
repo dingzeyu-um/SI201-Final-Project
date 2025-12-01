@@ -210,7 +210,7 @@ def main():
     conn.close()
     
     if track_count == 0:
-        print("\n✗ No tracks in database!")
+        print("\nNo tracks in database!")
         print("  Run gather_deezer.py first to add tracks.")
         return
     
@@ -232,11 +232,11 @@ def main():
     
     print("\n" + "="*60)
     if remaining == 0:
-        print("✓ COMPLETE: All tracks have genres assigned")
+        print("COMPLETE: All tracks have genres assigned")
     else:
         runs_needed = (remaining // MAX_ITEMS_PER_RUN) + 1
-        print(f"⚠️  {remaining} tracks still need genres")
-        print(f"   Run this script {runs_needed} more time(s)")
+        print(f"  {remaining} tracks still need genres")
+        print(f"  Run this script {runs_needed} more time(s)")
     print("="*60)
 
 
