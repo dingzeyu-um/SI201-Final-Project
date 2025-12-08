@@ -1,195 +1,245 @@
+# Dingze
 """
 analyze_visualize.py
 SI 201 Final Project - Analysis and Visualization
 
-This file:
-1. Selects data from ALL tables using JOINs
-2. Performs statistical calculations (chi-square test)
-3. Creates visualizations (3 required + 1 bonus)
-4. Exports results to text file
+This file performs statistical analysis and creates visualizations.
+Run this AFTER process_data.py has calculated collaboration statistics.
 
-Run this AFTER all data gathering and processing is complete.
+Analysis: The Collaboration Effect in Music
+Research Question: Do songs with featured artists have higher popularity?
 
-Team Members Responsible: 
-- Analysis/Calculations: [Member 2 Name]
-- Visualizations: [Member 3 Name]
+Statistical Tests:
+- Mann-Whitney U Test: Compare popularity distributions
+- Chi-Square Test: Collaboration status vs popularity tier independence
+
+Team Member Responsible: [Member 4 Name]
 """
 
 import sqlite3
 import numpy as np
 import pandas as pd
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency, mannwhitneyu
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-DB_NAME = 'music_income.db'
+DB_NAME = "music_collab.db"
 
 # Configure visualization style
-plt.style.use('seaborn-v0_8-darkgrid')
+plt.style.use("seaborn-v0_8-darkgrid")
 sns.set_palette("husl")
 
 
 # ==============================================================================
-# ANALYSIS FUNCTIONS (Team Member 2)
+# DATA RETRIEVAL FUNCTIONS
 # ==============================================================================
+
+
+def get_track_data():
+    """
+    Get all track data with collaboration status and genre.
+    Uses database JOINs to combine tracks with iTunes/MusicBrainz genres.
+
+    Returns:
+        pandas.DataFrame: Track data with columns:
+            track_id, title, artist_name, popularity, is_collaboration,
+            collab_indicator, genre
+    """
+    conn = sqlite3.connect(DB_NAME)
+
+    # Complex JOIN query across multiple tables
+    query = """
+        SELECT
+            t.track_id,
+            t.title,
+            t.artist_name,
+            t.popularity,
+            t.is_collaboration,
+            t.collab_indicator,
+            t.featuring_artist,
+            COALESCE(it.itunes_genre, g.genre_name, 'Unknown') as genre
+        FROM tracks t
+        LEFT JOIN itunes_tracks it ON t.track_id = it.track_id
+        LEFT JOIN track_genres tg ON t.track_id = tg.track_id
+        LEFT JOIN genres g ON tg.genre_id = g.genre_id
+    """
+
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+
+    return df
+
 
 def normalize_genre(genre_name):
     """
-    Map MusicBrainz tags to standard genre categories.
-    Copied from process_data.py to ensure consistency in analysis.
+    Map genre names to standard categories.
 
     Args:
-        genre_name (str): Raw genre name from MusicBrainz
+        genre_name (str): Raw genre name
 
     Returns:
         str: Normalized genre category
     """
+    if not genre_name or genre_name == 'Unknown':
+        return "other"
+
     genre_lower = genre_name.lower()
 
-    # Define mappings from MusicBrainz tags to standard genres
     mappings = {
-        'hip-hop': ['hip hop', 'hip-hop', 'rap', 'trap', 'hip hop soul'],
-        'rock': ['rock', 'alternative rock', 'hard rock', 'alternative metal', 'industrial metal'],
-        'pop': ['pop', 'art pop', 'folk pop'],
-        'r&b': ['r&b', 'contemporary r&b', 'soul'],
-        'latin': ['reggaeton', 'latin urban', 'norteño', 'flamenco'],
-        'country': ['country', 'canadian'],
-        'electronic': ['electronic', 'edm'],
-        'jazz': ['jazz'],
-        'classical': ['classical'],
+        "hip-hop": ["hip hop", "hip-hop", "rap", "trap"],
+        "rock": ["rock", "alternative rock", "hard rock", "alternative"],
+        "pop": ["pop", "dance", "electropop"],
+        "r&b": ["r&b", "contemporary r&b", "soul", "r&b/soul"],
+        "latin": ["reggaeton", "latin", "música mexicana"],
+        "country": ["country"],
+        "electronic": ["electronic", "edm", "house"],
     }
 
     for standard_genre, variants in mappings.items():
         if genre_lower in variants or any(v in genre_lower for v in variants):
             return standard_genre
 
-    return 'other'
+    return "other"
 
 
-def select_data_with_join():
+# ==============================================================================
+# STATISTICAL ANALYSIS FUNCTIONS
+# ==============================================================================
+
+
+def perform_mann_whitney_test(df):
     """
-    Select data from ALL tables using database JOINs.
-    This satisfies the "at least one database join" requirement.
-    
+    Perform Mann-Whitney U test comparing popularity between
+    solo tracks and collaborations.
+
+    This non-parametric test is appropriate when data may not be
+    normally distributed.
+
+    Args:
+        df (DataFrame): Track data
+
     Returns:
-        pandas.DataFrame: Query results
+        tuple: (u_statistic, p_value, solo_median, collab_median)
     """
-    conn = sqlite3.connect(DB_NAME)
-    
-    # Complex JOIN query across all 5 tables
-    # We fetch raw data first, then normalize and aggregate in Python
-    query = '''
-        SELECT 
-            CASE 
-                WHEN r.median_income < 55000 THEN 'Low (<$55k)'
-                WHEN r.median_income < 70000 THEN 'Middle ($55k-$70k)'
-                ELSE 'High (>$70k)'
-            END as income_bracket,
-            g.genre_name,
-            r.median_income,
-            t.popularity
-        FROM regional_popularity rp
-        JOIN regions r ON rp.region_id = r.region_id
-        JOIN tracks t ON rp.track_id = t.track_id
-        JOIN track_genres tg ON t.track_id = tg.track_id
-        JOIN genres g ON tg.genre_id = g.genre_id
-    '''
-    
-    raw_df = pd.read_sql_query(query, conn)
-    conn.close()
-    
-    if raw_df.empty:
-        return raw_df
+    solo = df[df['is_collaboration'] == 0]['popularity']
+    collab = df[df['is_collaboration'] == 1]['popularity']
 
-    # Apply normalization
-    raw_df['normalized_genre'] = raw_df['genre_name'].apply(normalize_genre)
-    
-    # Aggregate by income_bracket and normalized_genre
-    df = raw_df.groupby(['income_bracket', 'normalized_genre']).agg(
-        count=('normalized_genre', 'count'),
-        avg_income=('median_income', 'mean'),
-        avg_popularity=('popularity', 'mean')
-    ).reset_index()
-    
-    # Rename column to match expected format
-    df = df.rename(columns={'normalized_genre': 'genre_name'})
-    
-    # Filter low counts if necessary (optional, but keeps consistency with original query)
-    df = df[df['count'] > 3]
-    
-    # Sort
-    df = df.sort_values(['income_bracket', 'count'], ascending=[True, False])
-    
-    return df
+    if len(solo) < 2 or len(collab) < 2:
+        return None, None, None, None
+
+    u_stat, p_value = mannwhitneyu(solo, collab, alternative='two-sided')
+
+    return u_stat, p_value, solo.median(), collab.median()
 
 
 def perform_chi_square_test(df):
     """
     Perform chi-square test of independence.
-    Tests if income level and genre preference are independent.
-    
+    Tests if collaboration status and popularity tier are independent.
+
     Args:
-        df (DataFrame): Data from select_data_with_join()
-        
+        df (DataFrame): Track data
+
     Returns:
         tuple: (contingency, chi2, p_value, dof, expected, cramers_v)
     """
-    # Create contingency table
-    contingency = df.pivot_table(
-        values='count',
-        index='income_bracket',
-        columns='genre_name',
-        fill_value=0
+    # Create popularity tiers
+    df = df.copy()
+    df['popularity_tier'] = pd.qcut(
+        df['popularity'],
+        q=3,
+        labels=['Low', 'Medium', 'High'],
+        duplicates='drop'
     )
-    
+
+    df['collab_status'] = df['is_collaboration'].map({0: 'Solo', 1: 'Collaboration'})
+
+    # Create contingency table
+    contingency = pd.crosstab(df['collab_status'], df['popularity_tier'])
+
     # Perform chi-square test
     chi2, p_value, dof, expected = chi2_contingency(contingency)
-    
+
     # Calculate Cramér's V (effect size)
     n = contingency.sum().sum()
     min_dim = min(contingency.shape) - 1
     cramers_v = np.sqrt(chi2 / (n * min_dim)) if min_dim > 0 else 0
-    
+
     return contingency, chi2, p_value, dof, expected, cramers_v
 
 
-def print_analysis_results(contingency, chi2, p_value, dof, cramers_v):
+def print_analysis_results(df, mw_results, chi_results):
     """
     Print formatted analysis results to console.
-    
+
     Args:
-        contingency: Contingency table
-        chi2: Chi-square statistic
-        p_value: P-value
-        dof: Degrees of freedom
-        cramers_v: Cramér's V effect size
+        df: Track data
+        mw_results: Mann-Whitney test results
+        chi_results: Chi-square test results
     """
-    print("\n" + "="*70)
-    print("STATISTICAL ANALYSIS RESULTS")
-    print("="*70)
-    
-    print("\nCONTINGENCY TABLE (Observed Frequencies):")
-    print("-"*70)
-    print(contingency)
-    
-    print("\n" + "="*70)
+    u_stat, mw_p, solo_med, collab_med = mw_results
+    contingency, chi2, chi_p, dof, expected, cramers_v = chi_results
+
+    print("\n" + "=" * 70)
+    print("THE COLLABORATION EFFECT IN MUSIC - ANALYSIS RESULTS")
+    print("=" * 70)
+
+    # Data summary
+    total = len(df)
+    solo_count = len(df[df['is_collaboration'] == 0])
+    collab_count = len(df[df['is_collaboration'] == 1])
+
+    print(f"\nDATA SUMMARY:")
+    print(f"  Total tracks: {total}")
+    print(f"  Solo tracks: {solo_count} ({100*solo_count/total:.1f}%)")
+    print(f"  Collaborations: {collab_count} ({100*collab_count/total:.1f}%)")
+
+    # Mann-Whitney results
+    print("\n" + "=" * 70)
+    print("MANN-WHITNEY U TEST")
+    print("H0: Popularity distributions are the same for solo and collab tracks")
+    print("=" * 70)
+
+    if u_stat is not None:
+        print(f"U Statistic: {u_stat:,.0f}")
+        print(f"P-value: {mw_p:.6f}")
+        print(f"\nMedian Popularity:")
+        print(f"  Solo tracks: {solo_med:,.0f}")
+        print(f"  Collaborations: {collab_med:,.0f}")
+        print(f"  Difference: {collab_med - solo_med:+,.0f}")
+
+        print("\nINTERPRETATION:")
+        if mw_p < 0.05:
+            print("  ✓ STATISTICALLY SIGNIFICANT (p < 0.05)")
+            if collab_med > solo_med:
+                print("  → Collaborations have HIGHER popularity than solo tracks")
+            else:
+                print("  → Solo tracks have HIGHER popularity than collaborations")
+        else:
+            print("  ✗ NOT STATISTICALLY SIGNIFICANT (p ≥ 0.05)")
+            print("  → No significant difference in popularity distributions")
+
+    # Chi-square results
+    print("\n" + "=" * 70)
     print("CHI-SQUARE TEST OF INDEPENDENCE")
-    print("="*70)
-    print(f"Chi-Square Statistic: {chi2:.4f}")
-    print(f"P-value: {p_value:.6f}")
+    print("H0: Collaboration status and popularity tier are independent")
+    print("=" * 70)
+
+    print("\nContingency Table:")
+    print(contingency)
+
+    print(f"\nChi-Square Statistic: {chi2:.4f}")
+    print(f"P-value: {chi_p:.6f}")
     print(f"Degrees of Freedom: {dof}")
-    print(f"Significance Level (α): 0.05")
-    
+
     print("\nINTERPRETATION:")
-    if p_value < 0.05:
+    if chi_p < 0.05:
         print("  ✓ STATISTICALLY SIGNIFICANT (p < 0.05)")
-        print("  → Income level and genre preference ARE related")
-        print("  → We reject the null hypothesis of independence")
+        print("  → Collaboration status and popularity tier ARE related")
     else:
         print("  ✗ NOT STATISTICALLY SIGNIFICANT (p ≥ 0.05)")
         print("  → No strong evidence of relationship")
-        print("  → We fail to reject the null hypothesis")
-    
+
     print(f"\nEFFECT SIZE (Cramér's V): {cramers_v:.3f}")
     if cramers_v < 0.1:
         print("  → Small effect (V < 0.1)")
@@ -197,137 +247,256 @@ def print_analysis_results(contingency, chi2, p_value, dof, cramers_v):
         print("  → Medium effect (0.1 ≤ V < 0.3)")
     else:
         print("  → Large effect (V ≥ 0.3)")
-    
-    print("="*70)
+
+    print("=" * 70)
 
 
-def export_results_to_file(df, contingency, chi2, p_value, dof, cramers_v):
+def export_results_to_file(df, mw_results, chi_results):
     """
     Export all results to a text file.
-    Satisfies the "write calculated data to a file" requirement.
-    
+
     Args:
-        df: Original data
-        contingency: Contingency table
-        chi2, p_value, dof, cramers_v: Test results
+        df: Track data
+        mw_results: Mann-Whitney test results
+        chi_results: Chi-square test results
     """
-    filename = 'analysis_results.txt'
-    
-    # Use UTF-8 to allow Greek letters (e.g., alpha symbol) without encode errors on Windows
-    with open(filename, 'w', encoding='utf-8') as f:
-        f.write("="*70 + "\n")
-        f.write("MUSIC TRENDS VS INCOME LEVEL - ANALYSIS RESULTS\n")
+    filename = "analysis_results.txt"
+    u_stat, mw_p, solo_med, collab_med = mw_results
+    contingency, chi2, chi_p, dof, expected, cramers_v = chi_results
+
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write("=" * 70 + "\n")
+        f.write("THE COLLABORATION EFFECT IN MUSIC - ANALYSIS RESULTS\n")
         f.write("SI 201 Final Project\n")
-        f.write("="*70 + "\n\n")
-        
+        f.write("=" * 70 + "\n\n")
+
+        # Research question
+        f.write("RESEARCH QUESTION:\n")
+        f.write("Do songs with featured artists have higher popularity than solo tracks?\n\n")
+
         # Data summary
+        total = len(df)
+        solo_count = len(df[df['is_collaboration'] == 0])
+        collab_count = len(df[df['is_collaboration'] == 1])
+
         f.write("DATA SUMMARY\n")
-        f.write("-"*70 + "\n")
-        
+        f.write("-" * 70 + "\n")
+        f.write(f"Total tracks analyzed: {total}\n")
+        f.write(f"Solo tracks: {solo_count} ({100*solo_count/total:.1f}%)\n")
+        f.write(f"Collaborations: {collab_count} ({100*collab_count/total:.1f}%)\n\n")
+
+        # Database info
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
-        
-        cursor.execute('SELECT COUNT(*) FROM tracks')
-        f.write(f"Total Tracks: {cursor.fetchone()[0]}\n")
-        
-        cursor.execute('SELECT COUNT(*) FROM regions')
-        f.write(f"Total Regions: {cursor.fetchone()[0]}\n")
-        
-        cursor.execute('SELECT COUNT(*) FROM genres')
-        f.write(f"Total Genres: {cursor.fetchone()[0]}\n")
-        
-        cursor.execute('SELECT COUNT(*) FROM regional_popularity')
-        f.write(f"Regional Preferences: {cursor.fetchone()[0]}\n")
-        
+        for table in ['tracks', 'genres', 'track_genres', 'itunes_tracks']:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            f.write(f"{table}: {cursor.fetchone()[0]} rows\n")
         conn.close()
-        
-        # Query results
-        f.write("\n" + "="*70 + "\n")
-        f.write("GENRE PREFERENCES BY INCOME BRACKET\n")
-        f.write("-"*70 + "\n")
-        f.write(df.to_string(index=False))
-        f.write("\n")
-        
-        # Contingency table
-        f.write("\n" + "="*70 + "\n")
-        f.write("CONTINGENCY TABLE\n")
-        f.write("-"*70 + "\n")
-        f.write(contingency.to_string())
-        f.write("\n")
-        
+
+        # Mann-Whitney results
+        f.write("\n" + "=" * 70 + "\n")
+        f.write("MANN-WHITNEY U TEST\n")
+        f.write("-" * 70 + "\n")
+        if u_stat is not None:
+            f.write(f"U Statistic: {u_stat:,.0f}\n")
+            f.write(f"P-value: {mw_p:.6f}\n")
+            f.write(f"Solo Median Popularity: {solo_med:,.0f}\n")
+            f.write(f"Collaboration Median Popularity: {collab_med:,.0f}\n")
+            f.write(f"Significant at α=0.05: {'Yes' if mw_p < 0.05 else 'No'}\n")
+
         # Chi-square results
-        f.write("\n" + "="*70 + "\n")
-        f.write("CHI-SQUARE TEST RESULTS\n")
-        f.write("-"*70 + "\n")
+        f.write("\n" + "=" * 70 + "\n")
+        f.write("CHI-SQUARE TEST OF INDEPENDENCE\n")
+        f.write("-" * 70 + "\n")
+        f.write("Contingency Table:\n")
+        f.write(contingency.to_string() + "\n\n")
         f.write(f"Chi-Square Statistic: {chi2:.4f}\n")
-        f.write(f"P-value: {p_value:.6f}\n")
+        f.write(f"P-value: {chi_p:.6f}\n")
         f.write(f"Degrees of Freedom: {dof}\n")
         f.write(f"Cramér's V (Effect Size): {cramers_v:.3f}\n")
-        f.write(f"\nSignificant at α=0.05: {'Yes' if p_value < 0.05 else 'No'}\n")
-        
-        f.write("\n" + "="*70 + "\n")
-    
+        f.write(f"Significant at α=0.05: {'Yes' if chi_p < 0.05 else 'No'}\n")
+
+        f.write("\n" + "=" * 70 + "\n")
+
     print(f"✓ Results exported to {filename}")
 
 
 # ==============================================================================
-# VISUALIZATION FUNCTIONS (Team Member 3)
+# VISUALIZATION FUNCTIONS
 # ==============================================================================
 
-def create_heatmap_observed(contingency, chi2, p_value):
+
+def create_boxplot_popularity(df):
     """
-    Visualization 1: Heatmap of observed frequencies.
-    
+    Visualization 1: Box plot comparing popularity by collaboration status.
+
     Args:
-        contingency: Contingency table
-        chi2: Chi-square statistic
-        p_value: P-value
+        df: Track data
     """
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    df_plot = df.copy()
+    df_plot['Collaboration Status'] = df_plot['is_collaboration'].map(
+        {0: 'Solo', 1: 'Collaboration'}
+    )
+
+    sns.boxplot(
+        data=df_plot,
+        x='Collaboration Status',
+        y='popularity',
+        hue='Collaboration Status',
+        palette=['#3498db', '#e74c3c'],
+        ax=ax,
+        legend=False
+    )
+
+    # Add mean markers
+    means = df_plot.groupby('Collaboration Status')['popularity'].mean()
+    for i, status in enumerate(['Solo', 'Collaboration']):
+        ax.scatter(i, means[status], color='white', s=100, zorder=10,
+                   edgecolors='black', linewidth=2, marker='D')
+
+    plt.title(
+        "Track Popularity: Solo vs Collaboration\n(Diamond = Mean)",
+        fontsize=14,
+        fontweight="bold",
+        pad=20
+    )
+    plt.xlabel("Collaboration Status", fontsize=12, fontweight="bold")
+    plt.ylabel("Popularity (Deezer Rank)", fontsize=12, fontweight="bold")
+
+    plt.tight_layout()
+    plt.savefig("viz1_boxplot_popularity.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print("✓ Saved: viz1_boxplot_popularity.png")
+
+
+def create_bar_collab_by_genre(df):
+    """
+    Visualization 2: Grouped bar chart showing collaboration rate by genre.
+
+    Args:
+        df: Track data
+    """
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    df_plot = df.copy()
+    df_plot['normalized_genre'] = df_plot['genre'].apply(normalize_genre)
+
+    # Calculate collaboration rate by genre
+    genre_stats = df_plot.groupby('normalized_genre').agg(
+        total=('track_id', 'count'),
+        collabs=('is_collaboration', 'sum')
+    ).reset_index()
+
+    genre_stats['collab_rate'] = 100 * genre_stats['collabs'] / genre_stats['total']
+    genre_stats = genre_stats.sort_values('collab_rate', ascending=True)
+
+    # Create horizontal bar chart
+    colors = plt.cm.RdYlGn(genre_stats['collab_rate'] / 100)
+
+    bars = ax.barh(
+        genre_stats['normalized_genre'],
+        genre_stats['collab_rate'],
+        color=colors,
+        edgecolor='black',
+        linewidth=0.5
+    )
+
+    # Add value labels
+    for bar, rate, total in zip(bars, genre_stats['collab_rate'], genre_stats['total']):
+        ax.text(
+            bar.get_width() + 1,
+            bar.get_y() + bar.get_height()/2,
+            f'{rate:.1f}% (n={total})',
+            va='center',
+            fontsize=10
+        )
+
+    plt.title(
+        "Collaboration Rate by Genre",
+        fontsize=14,
+        fontweight="bold",
+        pad=20
+    )
+    plt.xlabel("Collaboration Rate (%)", fontsize=12, fontweight="bold")
+    plt.ylabel("Genre", fontsize=12, fontweight="bold")
+    plt.xlim(0, max(genre_stats['collab_rate']) + 15)
+
+    plt.tight_layout()
+    plt.savefig("viz2_collab_by_genre.png", dpi=300, bbox_inches="tight")
+    plt.close()
+
+    print("✓ Saved: viz2_collab_by_genre.png")
+
+
+def create_heatmap_genre_collab(df):
+    """
+    Visualization 3: Heatmap showing average popularity by genre and collab status.
+
+    Args:
+        df: Track data
+    """
+    fig, ax = plt.subplots(figsize=(10, 8))
+
+    df_plot = df.copy()
+    df_plot['normalized_genre'] = df_plot['genre'].apply(normalize_genre)
+    df_plot['collab_status'] = df_plot['is_collaboration'].map({0: 'Solo', 1: 'Collab'})
+
+    # Create pivot table
+    pivot = df_plot.pivot_table(
+        values='popularity',
+        index='normalized_genre',
+        columns='collab_status',
+        aggfunc='mean'
+    )
+
+    # Reorder columns
+    if 'Solo' in pivot.columns and 'Collab' in pivot.columns:
+        pivot = pivot[['Solo', 'Collab']]
+
     sns.heatmap(
-        contingency,
+        pivot,
         annot=True,
-        fmt='g',
+        fmt='.0f',
         cmap='YlOrRd',
-        cbar_kws={'label': 'Number of Tracks'},
+        cbar_kws={'label': 'Average Popularity'},
         linewidths=1,
         linecolor='white',
         ax=ax
     )
-    
-    significance = "(Significant)" if p_value < 0.05 else "(Not Significant)"
+
     plt.title(
-        f'Music Genre Preferences by Income Level\n'
-        f'χ² = {chi2:.2f}, p-value = {p_value:.4f} {significance}',
-        fontsize=16,
-        fontweight='bold',
+        "Average Popularity: Genre × Collaboration Status",
+        fontsize=14,
+        fontweight="bold",
         pad=20
     )
-    plt.xlabel('Music Genre', fontsize=13, fontweight='bold')
-    plt.ylabel('Income Bracket', fontsize=13, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
-    
+    plt.xlabel("Collaboration Status", fontsize=12, fontweight="bold")
+    plt.ylabel("Genre", fontsize=12, fontweight="bold")
+
     plt.tight_layout()
-    plt.savefig('viz1_heatmap_observed.png', dpi=300, bbox_inches='tight')
+    plt.savefig("viz3_heatmap_genre_collab.png", dpi=300, bbox_inches="tight")
     plt.close()
-    
-    print("✓ Saved: viz1_heatmap_observed.png")
+
+    print("✓ Saved: viz3_heatmap_genre_collab.png")
 
 
-def create_heatmap_percentage(contingency):
+def create_chi_square_visualization(contingency, chi2, p_value):
     """
-    Visualization 2: Heatmap showing percentage distribution.
-    
+    Visualization 4: Chi-square contingency table heatmap.
+
     Args:
-        contingency: Contingency table
+        contingency: Contingency table from chi-square test
+        chi2: Chi-square statistic
+        p_value: P-value
     """
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Calculate percentages within each income bracket
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Calculate percentages
     percentages = contingency.div(contingency.sum(axis=1), axis=0) * 100
-    
+
     sns.heatmap(
         percentages,
         annot=True,
@@ -338,171 +507,92 @@ def create_heatmap_percentage(contingency):
         linecolor='white',
         ax=ax,
         vmin=0,
-        vmax=percentages.max().max()
+        vmax=100
     )
-    
+
+    significance = "(Significant)" if p_value < 0.05 else "(Not Significant)"
     plt.title(
-        'Genre Distribution Within Each Income Bracket (%)',
-        fontsize=16,
-        fontweight='bold',
-        pad=20
-    )
-    plt.xlabel('Music Genre', fontsize=13, fontweight='bold')
-    plt.ylabel('Income Bracket', fontsize=13, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
-    
-    plt.tight_layout()
-    plt.savefig('viz2_heatmap_percentage.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("✓ Saved: viz2_heatmap_percentage.png")
-
-
-def create_bar_chart(contingency):
-    """
-    Visualization 3: Grouped bar chart.
-    
-    Args:
-        contingency: Contingency table
-    """
-    fig, ax = plt.subplots(figsize=(14, 8))
-    
-    contingency.plot(
-        kind='bar',
-        ax=ax,
-        width=0.8,
-        edgecolor='black',
-        linewidth=0.7
-    )
-    
-    plt.title(
-        'Music Genre Popularity Across Income Brackets',
-        fontsize=16,
-        fontweight='bold',
-        pad=20
-    )
-    plt.xlabel('Income Bracket', fontsize=13, fontweight='bold')
-    plt.ylabel('Number of Popular Tracks', fontsize=13, fontweight='bold')
-    plt.xticks(rotation=0)
-    plt.legend(
-        title='Genre',
-        bbox_to_anchor=(1.05, 1),
-        loc='upper left',
-        frameon=True,
-        shadow=True
-    )
-    plt.grid(axis='y', alpha=0.3, linestyle='--')
-    
-    # Add value labels on bars
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.0f', padding=3, fontsize=8)
-    
-    plt.tight_layout()
-    plt.savefig('viz3_bar_chart.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print("✓ Saved: viz3_bar_chart.png")
-
-
-def create_heatmap_residuals(contingency, expected):
-    """
-    Visualization 4 (BONUS): Standardized residuals heatmap.
-    Shows which combinations are over/underrepresented.
-    
-    Args:
-        contingency: Observed frequencies
-        expected: Expected frequencies from chi-square test
-    """
-    fig, ax = plt.subplots(figsize=(12, 8))
-    
-    # Calculate standardized residuals
-    residuals = (contingency - expected) / np.sqrt(expected)
-    
-    sns.heatmap(
-        residuals,
-        annot=True,
-        fmt='.2f',
-        cmap='RdBu_r',
-        center=0,
-        vmin=-3,
-        vmax=3,
-        cbar_kws={'label': 'Standardized Residual'},
-        linewidths=1,
-        linecolor='white',
-        ax=ax
-    )
-    
-    plt.title(
-        'Standardized Residuals: Deviation from Expected\n'
-        '(Red = More than expected, Blue = Less than expected)',
+        f"Popularity Tier Distribution by Collaboration Status\n"
+        f"χ² = {chi2:.2f}, p = {p_value:.4f} {significance}",
         fontsize=14,
-        fontweight='bold',
+        fontweight="bold",
         pad=20
     )
-    plt.xlabel('Music Genre', fontsize=13, fontweight='bold')
-    plt.ylabel('Income Bracket', fontsize=13, fontweight='bold')
-    plt.xticks(rotation=45, ha='right')
-    plt.yticks(rotation=0)
-    
+    plt.xlabel("Popularity Tier", fontsize=12, fontweight="bold")
+    plt.ylabel("Collaboration Status", fontsize=12, fontweight="bold")
+
     plt.tight_layout()
-    plt.savefig('viz4_heatmap_residuals.png', dpi=300, bbox_inches='tight')
+    plt.savefig("viz4_chi_square_heatmap.png", dpi=300, bbox_inches="tight")
     plt.close()
-    
-    print("✓ Saved: viz4_heatmap_residuals.png (BONUS)")
+
+    print("✓ Saved: viz4_chi_square_heatmap.png")
 
 
 # ==============================================================================
 # MAIN FUNCTION
 # ==============================================================================
 
+
 def main():
     """
     Main function to perform analysis and create visualizations.
     """
-    print("\n" + "="*70)
-    print("ANALYSIS AND VISUALIZATION")
-    print("="*70)
-    
-    # Step 1: Select data with JOINs
-    print("\n[1] Selecting data from database with JOINs...")
-    df = select_data_with_join()
-    
+    print("\n" + "=" * 70)
+    print("THE COLLABORATION EFFECT IN MUSIC")
+    print("Analysis and Visualization")
+    print("=" * 70)
+
+    # Step 1: Get data
+    print("\n[1] Loading track data from database...")
+    df = get_track_data()
+
     if df.empty:
         print("✗ No data found! Please run all gather scripts first.")
         return
-    
-    print(f"✓ Retrieved {len(df)} rows of aggregated data")
-    print("\nSample data:")
-    print(df.head(10))
-    
-    # Step 2: Perform chi-square test
-    print("\n[2] Performing chi-square analysis...")
-    contingency, chi2, p_value, dof, expected, cramers_v = perform_chi_square_test(df)
-    print_analysis_results(contingency, chi2, p_value, dof, cramers_v)
-    
+
+    print(f"✓ Loaded {len(df)} tracks")
+
+    solo_count = len(df[df['is_collaboration'] == 0])
+    collab_count = len(df[df['is_collaboration'] == 1])
+    print(f"  Solo: {solo_count}, Collaborations: {collab_count}")
+
+    if collab_count == 0:
+        print("\n✗ No collaborations detected in data!")
+        print("  The analysis requires both solo and collaboration tracks.")
+        return
+
+    # Step 2: Perform statistical tests
+    print("\n[2] Performing statistical analysis...")
+
+    mw_results = perform_mann_whitney_test(df)
+    chi_results = perform_chi_square_test(df)
+
+    print_analysis_results(df, mw_results, chi_results)
+
     # Step 3: Create visualizations
     print("\n[3] Creating visualizations...")
-    create_heatmap_observed(contingency, chi2, p_value)
-    create_heatmap_percentage(contingency)
-    create_bar_chart(contingency)
-    create_heatmap_residuals(contingency, expected)
-    
+    create_boxplot_popularity(df)
+    create_bar_collab_by_genre(df)
+    create_heatmap_genre_collab(df)
+
+    contingency, chi2, p_value, _, _, _ = chi_results
+    create_chi_square_visualization(contingency, chi2, p_value)
+
     # Step 4: Export results
     print("\n[4] Exporting results to file...")
-    export_results_to_file(df, contingency, chi2, p_value, dof, cramers_v)
-    
+    export_results_to_file(df, mw_results, chi_results)
+
     # Final summary
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("ANALYSIS COMPLETE!")
-    print("="*70)
+    print("=" * 70)
     print("\nGenerated files:")
-    print("  • viz1_heatmap_observed.png")
-    print("  • viz2_heatmap_percentage.png")
-    print("  • viz3_bar_chart.png")
-    print("  • viz4_heatmap_residuals.png (BONUS)")
-    print("  • analysis_results.txt")
-    print("="*70)
+    print("  • viz1_boxplot_popularity.png - Popularity comparison")
+    print("  • viz2_collab_by_genre.png - Collaboration rate by genre")
+    print("  • viz3_heatmap_genre_collab.png - Genre × collab heatmap")
+    print("  • viz4_chi_square_heatmap.png - Chi-square results")
+    print("  • analysis_results.txt - Full analysis report")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

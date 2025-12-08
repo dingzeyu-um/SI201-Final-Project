@@ -9,6 +9,8 @@ API: https://musicbrainz.org/ws/2/artist
 Authentication: None required (User-Agent header required)
 Rate Limit: 1 request per second
 
+Analysis: The Collaboration Effect in Music
+
 Team Member Responsible: [Member 3 Name]
 """
 
@@ -16,9 +18,13 @@ import sqlite3
 import requests
 import time
 
-DB_NAME = 'music_income.db'
-MAX_ITEMS_PER_RUN = 25  # Required by project: max 25 items per run
+DB_NAME = 'music_collab.db'
+
+# Debug mode - set to False for production (25 item limit per SI 201 requirements)
+DEBUG_MODE = True
+MAX_ITEMS_PER_RUN = 100 if DEBUG_MODE else 25
 RATE_LIMIT_DELAY = 1.1  # Seconds between requests (MusicBrainz requires 1/sec)
+MAX_RETRIES = 3  # Number of retries for connection errors
 
 
 def fetch_genre_for_artist(artist_name):
@@ -44,31 +50,38 @@ def fetch_genre_for_artist(artist_name):
         'User-Agent': 'SI201FinalProject/1.0 (Educational; University of Michigan)'
     }
     
-    try:
-        # Respect rate limit
-        time.sleep(RATE_LIMIT_DELAY)
-        
-        response = requests.get(url, params=params, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        
-        # Extract genre from tags
-        if data.get('artists') and len(data['artists']) > 0:
-            artist = data['artists'][0]
-            tags = artist.get('tags', [])
-            
-            if tags:
-                # Return highest-scoring tag
-                sorted_tags = sorted(tags, key=lambda x: x.get('count', 0), reverse=True)
-                return sorted_tags[0]['name']
-        
-        return None
-        
-    except requests.exceptions.RequestException as e:
-        print(f"    API error for {artist_name}: {e}")
-        return None
-    except (KeyError, IndexError):
-        return None
+    for attempt in range(MAX_RETRIES):
+        try:
+            # Respect rate limit
+            time.sleep(RATE_LIMIT_DELAY)
+
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract genre from tags
+            if data.get('artists') and len(data['artists']) > 0:
+                artist = data['artists'][0]
+                tags = artist.get('tags', [])
+
+                if tags:
+                    # Return highest-scoring tag
+                    sorted_tags = sorted(tags, key=lambda x: x.get('count', 0), reverse=True)
+                    return sorted_tags[0]['name']
+
+            return None
+
+        except requests.exceptions.RequestException as e:
+            if attempt < MAX_RETRIES - 1:
+                print(f"    Retry {attempt + 1}/{MAX_RETRIES} for {artist_name}...")
+                time.sleep(2)  # Wait before retry
+                continue
+            print(f"    API error for {artist_name}: {e}")
+            return None
+        except (KeyError, IndexError):
+            return None
+
+    return None
 
 
 def guess_genre_from_name(artist_name):

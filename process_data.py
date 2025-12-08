@@ -1,248 +1,291 @@
+# Dingze
 """
 process_data.py
 SI 201 Final Project - Data Processing
 
-This file creates relationships between regions and tracks,
-simulating regional music preferences based on income levels.
+This file processes the collected data and calculates collaboration statistics.
+Run this AFTER all gather scripts have collected sufficient data.
 
-Run this AFTER all data has been gathered (100+ in each table).
+Analysis: The Collaboration Effect in Music
+- Calculates aggregate statistics by genre and collaboration status
+- Prepares data for statistical analysis
 
-Team Member Responsible: [Member 1 Name]
+Team Member Responsible: [Member 3 Name]
 """
 
 import sqlite3
 import numpy as np
 
-DB_NAME = 'music_income.db'
-MAX_ITEMS_PER_RUN = 25  # For consistency, though this creates many records
+DB_NAME = "music_collab.db"
 
 
 def normalize_genre(genre_name):
     """
-    Map MusicBrainz tags to standard genre categories.
+    Map genre names to standard categories.
 
     Args:
-        genre_name (str): Raw genre name from MusicBrainz
+        genre_name (str): Raw genre name from MusicBrainz or iTunes
 
     Returns:
         str: Normalized genre category
     """
+    if not genre_name:
+        return "other"
+
     genre_lower = genre_name.lower()
 
-    # Define mappings from MusicBrainz tags to standard genres
+    # Define mappings to standard genres
     mappings = {
-        'hip-hop': ['hip hop', 'hip-hop', 'rap', 'trap', 'hip hop soul'],
-        'rock': ['rock', 'alternative rock', 'hard rock', 'alternative metal', 'industrial metal'],
-        'pop': ['pop', 'art pop', 'folk pop'],
-        'r&b': ['r&b', 'contemporary r&b', 'soul'],
-        'latin': ['reggaeton', 'latin urban', 'norteño', 'flamenco'],
-        'country': ['country', 'canadian'],
-        'electronic': ['electronic', 'edm'],
-        'jazz': ['jazz'],
-        'classical': ['classical'],
+        "hip-hop": ["hip hop", "hip-hop", "rap", "trap", "hip hop soul"],
+        "rock": [
+            "rock",
+            "alternative rock",
+            "hard rock",
+            "alternative metal",
+            "industrial metal",
+            "alternative",
+        ],
+        "pop": ["pop", "art pop", "folk pop", "dance", "electropop"],
+        "r&b": ["r&b", "contemporary r&b", "soul", "r&b/soul"],
+        "latin": ["reggaeton", "latin urban", "latin", "música mexicana"],
+        "country": ["country"],
+        "electronic": ["electronic", "edm", "house", "techno"],
+        "jazz": ["jazz"],
+        "classical": ["classical"],
     }
 
     for standard_genre, variants in mappings.items():
         if genre_lower in variants or any(v in genre_lower for v in variants):
             return standard_genre
 
-    return 'other'
+    return "other"
 
 
-def create_regional_preferences():
+def calculate_collaboration_stats():
     """
-    Create relationships between regions and tracks based on income.
-    This simulates the correlation between income and music preferences.
-    
-    Income-based preferences:
-    - Low income (<$55k): Prefer hip-hop, pop, r&b
-    - Middle income ($55k-$70k): Balanced preferences
-    - High income (>$70k): Prefer rock, classical, jazz
-    
+    Calculate aggregate statistics for collaboration analysis.
+    Groups tracks by genre and collaboration status.
+
     Returns:
-        int: Number of preference records created
+        int: Number of stat records created
     """
-    # Set seed for reproducibility
-    np.random.seed(42)
-    
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    # Clear existing data to ensure fresh start
-    cursor.execute('DELETE FROM regional_popularity')
-    print("✓ Cleared existing regional preferences")
-    
-    # Get all regions with income data
-    cursor.execute('SELECT region_id, median_income FROM regions')
-    regions = cursor.fetchall()
-    
-    if not regions:
-        print("✗ No regions found! Run gather_census.py first.")
-        conn.close()
-        return 0
-    
-    # Get all tracks with their genres
-    cursor.execute('''
-        SELECT t.track_id, g.genre_name, t.popularity
+
+    # Clear existing stats
+    cursor.execute("DELETE FROM collaboration_stats")
+    print("✓ Cleared existing collaboration stats")
+
+    # Get tracks with genres (prefer iTunes genre, fall back to MusicBrainz)
+    cursor.execute("""
+        SELECT
+            t.track_id,
+            t.popularity,
+            t.is_collaboration,
+            COALESCE(it.itunes_genre, g.genre_name) as genre
         FROM tracks t
-        JOIN track_genres tg ON t.track_id = tg.track_id
-        JOIN genres g ON tg.genre_id = g.genre_id
-    ''')
+        LEFT JOIN itunes_tracks it ON t.track_id = it.track_id
+        LEFT JOIN track_genres tg ON t.track_id = tg.track_id
+        LEFT JOIN genres g ON tg.genre_id = g.genre_id
+    """)
+
     tracks = cursor.fetchall()
-    
+
     if not tracks:
-        print("✗ No tracks with genres found!")
-        print("  Run gather_deezer.py and gather_musicbrainz.py first.")
+        print("✗ No tracks found! Run gather scripts first.")
         conn.close()
         return 0
-    
-    print(f"Processing {len(regions)} regions and {len(tracks)} tracks...")
-    
-    # Define genre weights by income bracket (using normalized genre names)
-    low_income_weights = {
-        'hip-hop': 2.5, 'pop': 2.0, 'r&b': 1.8, 'latin': 1.6,
-        'country': 1.5, 'rock': 1.0, 'jazz': 0.5,
-        'classical': 0.3, 'electronic': 1.2, 'other': 1.0
-    }
 
-    middle_income_weights = {
-        'pop': 2.2, 'hip-hop': 1.8, 'rock': 1.8, 'latin': 1.5,
-        'r&b': 1.5, 'country': 1.3, 'jazz': 0.8,
-        'classical': 0.6, 'electronic': 1.5, 'other': 1.0
-    }
+    print(f"Processing {len(tracks)} tracks...")
 
-    high_income_weights = {
-        'rock': 2.5, 'pop': 1.8, 'classical': 1.5, 'jazz': 1.5,
-        'r&b': 1.2, 'hip-hop': 1.0, 'latin': 1.0,
-        'country': 0.8, 'electronic': 1.0, 'other': 1.0
-    }
-    
+    # Group by normalized genre and collaboration status
+    stats = {}
+    for track_id, popularity, is_collab, genre in tracks:
+        normalized = normalize_genre(genre)
+        key = (normalized, is_collab)
+
+        if key not in stats:
+            stats[key] = []
+        stats[key].append(popularity)
+
+    # Calculate aggregates and store
     created_count = 0
-    
-    for region_id, income in regions:
-        # Determine income bracket and weights
-        if income < 55000:
-            weights = low_income_weights
-        elif income < 70000:
-            weights = middle_income_weights
+
+    for (genre, is_collab), popularities in stats.items():
+        # Get or create genre
+        cursor.execute("SELECT genre_id FROM genres WHERE genre_name = ?", (genre,))
+        result = cursor.fetchone()
+
+        if result:
+            genre_id = result[0]
         else:
-            weights = high_income_weights
-        
-        # For each track, decide if it's popular in this region
-        for track_id, genre, popularity in tracks:
-            normalized_genre = normalize_genre(genre)
-            weight = weights.get(normalized_genre, 1.0)
-            
-            # Probability of track being popular in this region
-            # Higher weight = higher probability
-            probability = 0.25 * weight  # Base 25% chance, modified by weight
-            
-            if np.random.random() < probability:
-                # Calculate rank based on popularity and weight
-                rank = int(popularity / (1000 * weight))
-                
-                try:
-                    cursor.execute('''
-                        INSERT OR IGNORE INTO regional_popularity 
-                        (region_id, track_id, rank)
-                        VALUES (?, ?, ?)
-                    ''', (region_id, track_id, rank))
-                    
-                    if cursor.rowcount > 0:
-                        created_count += 1
-                except sqlite3.IntegrityError:
-                    continue
-    
+            cursor.execute("INSERT INTO genres (genre_name) VALUES (?)", (genre,))
+            genre_id = cursor.lastrowid
+
+        # Calculate stats
+        track_count = len(popularities)
+        avg_pop = np.mean(popularities) if popularities else 0
+        median_pop = np.median(popularities) if popularities else 0
+
+        # Store
+        cursor.execute("""
+            INSERT INTO collaboration_stats
+            (genre_id, is_collaboration, track_count, avg_popularity, median_popularity)
+            VALUES (?, ?, ?, ?, ?)
+        """, (genre_id, is_collab, track_count, avg_pop, median_pop))
+
+        created_count += 1
+
     conn.commit()
-    
-    # Get total count
-    cursor.execute('SELECT COUNT(*) FROM regional_popularity')
-    total = cursor.fetchone()[0]
-    
     conn.close()
-    
-    print(f"✓ Created {created_count} new preference records (Total: {total})")
-    
+
+    print(f"✓ Created {created_count} collaboration stat records")
     return created_count
 
 
 def check_data_status():
     """
     Check if all required data is present before processing.
-    
+
     Returns:
         bool: True if ready to process, False otherwise
     """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    
-    print("\n" + "="*60)
+
+    print("\n" + "=" * 60)
     print("DATA STATUS CHECK")
-    print("="*60)
-    
+    print("=" * 60)
+
     # Check each table
-    tables = {
-        'tracks': 100,
-        'regions': 50,  # Only ~52 states available
-        'track_genres': 100,
-        'genres': 1
+    requirements = {
+        "tracks": 100,
+        "genres": 1,
+        "track_genres": 50,
+        "itunes_tracks": 50,
     }
-    
+
     all_ready = True
-    
-    for table, min_required in tables.items():
-        cursor.execute(f'SELECT COUNT(*) FROM {table}')
-        count = cursor.fetchone()[0]
-        
-        if count >= min_required:
-            print(f"   {table}: {count} rows")
-        else:
-            print(f"   {table}: {count} rows (need {min_required}+)")
+
+    for table, min_required in requirements.items():
+        try:
+            cursor.execute(f"SELECT COUNT(*) FROM {table}")
+            count = cursor.fetchone()[0]
+
+            if count >= min_required:
+                print(f"   {table}: {count} rows")
+            else:
+                print(f"   {table}: {count} rows (need {min_required}+)")
+                all_ready = False
+        except sqlite3.OperationalError:
+            print(f"   ✗ {table}: Table does not exist")
             all_ready = False
-    
+
+    # Check collaboration breakdown
+    try:
+        cursor.execute("""
+            SELECT is_collaboration, COUNT(*)
+            FROM tracks
+            GROUP BY is_collaboration
+        """)
+        collab_breakdown = cursor.fetchall()
+
+        if collab_breakdown:
+            print("\n  Collaboration breakdown:")
+            for is_collab, count in collab_breakdown:
+                label = "Collaborations" if is_collab else "Solo tracks"
+                print(f"    {label}: {count}")
+    except sqlite3.OperationalError:
+        pass
+
     conn.close()
-    
-    print("="*60)
-    
+
+    print("=" * 60)
     return all_ready
+
+
+def print_stats_summary():
+    """
+    Print a summary of the calculated statistics.
+    """
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+
+    print("\n" + "=" * 60)
+    print("COLLABORATION STATISTICS SUMMARY")
+    print("=" * 60)
+
+    cursor.execute("""
+        SELECT
+            g.genre_name,
+            cs.is_collaboration,
+            cs.track_count,
+            cs.avg_popularity,
+            cs.median_popularity
+        FROM collaboration_stats cs
+        JOIN genres g ON cs.genre_id = g.genre_id
+        ORDER BY g.genre_name, cs.is_collaboration
+    """)
+
+    results = cursor.fetchall()
+
+    if not results:
+        print("No statistics calculated yet.")
+        conn.close()
+        return
+
+    current_genre = None
+    for genre, is_collab, count, avg_pop, median_pop in results:
+        if genre != current_genre:
+            print(f"\n  {genre.upper()}")
+            current_genre = genre
+
+        label = "Collab" if is_collab else "Solo"
+        print(f"    {label}: {count} tracks, avg popularity: {avg_pop:,.0f}")
+
+    conn.close()
+    print("\n" + "=" * 60)
 
 
 def main():
     """
-    Main function to create regional preferences.
+    Main function to process data and calculate statistics.
     """
-    print("\n" + "="*60)
-    print("DATA PROCESSING - REGIONAL PREFERENCES")
-    print("="*60)
-    
+    print("\n" + "=" * 60)
+    print("DATA PROCESSING - COLLABORATION STATISTICS")
+    print("=" * 60)
+
     # Check if data is ready
     if not check_data_status():
         print("\n✗ Not enough data to process!")
         print("  Please run the gather scripts first:")
         print("    1. python gather_deezer.py (run 4+ times)")
-        print("    2. python gather_census.py (run 2-3 times)")
-        print("    3. python gather_musicbrainz.py (run 4+ times)")
+        print("    2. python gather_musicbrainz.py (run 4+ times)")
+        print("    3. python gather_itunes.py (run 4+ times)")
         return
-    
-    # Create regional preferences
-    print("\nCreating regional music preferences...")
-    created = create_regional_preferences()
-    
+
+    # Calculate collaboration statistics
+    print("\nCalculating collaboration statistics...")
+    created = calculate_collaboration_stats()
+
+    if created > 0:
+        print_stats_summary()
+
     # Final status
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute('SELECT COUNT(*) FROM regional_popularity')
+    cursor.execute("SELECT COUNT(*) FROM collaboration_stats")
     total = cursor.fetchone()[0]
     conn.close()
-    
-    print("\n" + "="*60)
-    if total >= 100:
-        print(f"✓ COMPLETE: {total} regional preferences created")
+
+    print("\n" + "=" * 60)
+    if total >= 10:
+        print(f"✓ COMPLETE: {total} stat records created")
         print("  Ready to run analyze_visualize.py")
     else:
-        print(f"⚠️  Only {total} preferences created")
-        print("  May need more data in tracks/regions tables")
-    print("="*60)
+        print(f"⚠️  Only {total} stat records created")
+        print("  May need more data in tracks table")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
