@@ -52,10 +52,11 @@ def fetch_genre_for_artist(artist_name):
     
     for attempt in range(MAX_RETRIES):
         try:
-            # Respect rate limit
+            response = requests.get(url, params=params, headers=headers, timeout=10)
+
+            # Respect rate limit after request (not before)
             time.sleep(RATE_LIMIT_DELAY)
 
-            response = requests.get(url, params=params, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
 
@@ -73,8 +74,9 @@ def fetch_genre_for_artist(artist_name):
 
         except requests.exceptions.RequestException as e:
             if attempt < MAX_RETRIES - 1:
+                delay = RATE_LIMIT_DELAY * (2 ** attempt)  # Exponential backoff
                 print(f"    Retry {attempt + 1}/{MAX_RETRIES} for {artist_name}...")
-                time.sleep(2)  # Wait before retry
+                time.sleep(delay)
                 continue
             print(f"    API error for {artist_name}: {e}")
             return None
@@ -105,8 +107,10 @@ def guess_genre_from_name(artist_name):
                  'chili', 'nirvana', 'foo', 'green day', 'ac/dc', 'metallica'],
         'r&b': ['weeknd', 'rihanna', 'beyoncé', 'beyonce', 'frank ocean', 
                 'sza', 'usher', 'chris brown', 'alicia'],
-        'country': ['combs', 'wallen', 'stapleton', 'carrie', 'blake', 
-                    'kenny', 'dolly', 'garth'],
+        'country': ['combs', 'wallen', 'stapleton', 'carrie', 'blake',
+                    'kenny', 'dolly', 'garth', 'country rock', 'country and western',
+                    'creed fisher', 'alli walker', 'chancey williams', 'shawn cuddy',
+                    'billy ray'],
         'pop': ['swift', 'sheeran', 'grande', 'bieber', 'eilish', 
                 'mars', 'dua lipa', 'harry styles', 'katy perry', 'lady gaga'],
         'electronic': ['daft punk', 'avicii', 'marshmello', 'calvin harris', 

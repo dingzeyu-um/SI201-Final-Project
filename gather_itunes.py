@@ -77,12 +77,14 @@ def search_itunes(title, artist):
 
     url = f"https://itunes.apple.com/search?term={encoded_term}&media=music&entity=song&limit=3"
 
+    headers = {'User-Agent': 'SI201MusicProject/1.0 (Educational)'}
+
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
 
-            # Handle rate limiting with exponential backoff
-            if response.status_code == 429:
+            # Handle rate limiting and forbidden errors with exponential backoff
+            if response.status_code in [403, 429]:
                 if attempt < MAX_RETRIES - 1:
                     delay = RATE_LIMIT_DELAY * (2 ** attempt)
                     print(f"  ⏳ Rate limited, waiting {delay}s...")
